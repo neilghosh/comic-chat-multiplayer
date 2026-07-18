@@ -566,7 +566,7 @@
                         const img = panel.querySelector('img');
                         img.src = `${data.image_url}?t=${Date.now()}`;
                         const senderSpan = panel.querySelector('.panel-sender');
-                        senderSpan.textContent = escapeHtml(data.sender);
+                        senderSpan.textContent = data.sender;
                     } else {
                         sceneCount++;
                         const rot = (Math.random() * 2 - 1).toFixed(1);
