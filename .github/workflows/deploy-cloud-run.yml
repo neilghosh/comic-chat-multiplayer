@@ -1,0 +1,90 @@
+name: Deploy to Cloud Run
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  PROJECT_ID: demoneil
+  REGION: us-central1
+  SERVICE: comic-chat
+  IMAGE_REPO: comic-chat
+  BUCKET_NAME: demoneil-comic-panels
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+
+      - name: Ensure Artifact Registry repository exists
+        run: |
+          gcloud artifacts repositories describe "${IMAGE_REPO}" \
+            --location "${REGION}" \
+            --project "${PROJECT_ID}" >/dev/null 2>&1 || \
+          gcloud artifacts repositories create "${IMAGE_REPO}" \
+            --repository-format=docker \
+            --location "${REGION}" \
+            --description="Docker images for comic chat" \
+            --project "${PROJECT_ID}"
+
+      - name: Configure Docker auth for Artifact Registry
+        run: gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
+
+      - name: Build and push image
+        env:
+          IMAGE_URI: ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.IMAGE_REPO }}/${{ env.SERVICE }}:${{ github.sha }}
+        run: |
+          docker build -t "${IMAGE_URI}" .
+          docker push "${IMAGE_URI}"
+          echo "IMAGE_URI=${IMAGE_URI}" >> "${GITHUB_ENV}"
+
+      - name: Ensure GCS bucket exists
+        run: |
+          gcloud storage buckets describe "gs://${BUCKET_NAME}" --project "${PROJECT_ID}" >/dev/null 2>&1 || \
+          gcloud storage buckets create "gs://${BUCKET_NAME}" \
+            --location "${REGION}" \
+            --uniform-bucket-level-access \
+            --project "${PROJECT_ID}"
+
+      - name: Grant bucket access to runtime service account
+        run: |
+          gcloud storage buckets add-iam-policy-binding "gs://${BUCKET_NAME}" \
+            --member="serviceAccount:${{ secrets.GCP_SERVICE_ACCOUNT }}" \
+            --role="roles/storage.objectUser" \
+            --project "${PROJECT_ID}"
+
+      - name: Deploy to Cloud Run
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          gcloud run deploy "${SERVICE}" \
+            --image "${IMAGE_URI}" \
+            --platform managed \
+            --region "${REGION}" \
+            --allow-unauthenticated \
+            --max-instances 1 \
+            --execution-environment gen2 \
+            --timeout 3600 \
+            --service-account "${{ secrets.GCP_SERVICE_ACCOUNT }}" \
+            --set-env-vars "GEMINI_API_KEY=${GEMINI_API_KEY}" \
+            --add-volume name=panels-vol,type=cloud-storage,bucket="${BUCKET_NAME}" \
+            --add-volume-mount volume=panels-vol,mount-path=/app/static/generated
