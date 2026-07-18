@@ -16,6 +16,7 @@ env:
   SERVICE: comic-chat
   IMAGE_REPO: comic-chat
   BUCKET_NAME: demoneil-comic-panels
+  DEPLOY_SERVICE_ACCOUNT: cloudrun-deploy@demoneil.iam.gserviceaccount.com
 
 jobs:
   deploy:
@@ -28,7 +29,7 @@ jobs:
         uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
-          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
 
       - name: Setup gcloud
         uses: google-github-actions/setup-gcloud@v2
@@ -68,7 +69,7 @@ jobs:
       - name: Grant bucket access to runtime service account
         run: |
           gcloud storage buckets add-iam-policy-binding "gs://${BUCKET_NAME}" \
-            --member="serviceAccount:${{ secrets.GCP_SERVICE_ACCOUNT }}" \
+            --member="serviceAccount:${DEPLOY_SERVICE_ACCOUNT}" \
             --role="roles/storage.objectUser" \
             --project "${PROJECT_ID}"
 
@@ -84,7 +85,7 @@ jobs:
             --max-instances 1 \
             --execution-environment gen2 \
             --timeout 3600 \
-            --service-account "${{ secrets.GCP_SERVICE_ACCOUNT }}" \
+            --service-account "${DEPLOY_SERVICE_ACCOUNT}" \
             --set-env-vars "GEMINI_API_KEY=${GEMINI_API_KEY}" \
             --add-volume name=panels-vol,type=cloud-storage,bucket="${BUCKET_NAME}" \
             --add-volume-mount volume=panels-vol,mount-path=/app/static/generated
