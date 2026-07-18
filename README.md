@@ -1,55 +1,67 @@
-# Comic Chat: Multiplayer Room Architecture & Data Flow
+# Comic Chat: Server-Side Generative AI Architecture
 
-This repository details the architectural layout, data protocols, and synchronization mechanics for the multiplayer "Comic Chat" room system. 
+This repository outlines the data flow, protocols, and synchronization mechanics for the **Generative AI** version of the multiplayer "Comic Chat" room system. 
+
+Instead of compositing pre-drawn 2D vector sprites, this design leverages server-side Generative AI models (Google Vertex AI) to synthesize unique, photorealistic, or stylized comic book panels on-demand from conversational text.
 
 ---
 
-## 🗺️ System Concept & Flow
+## 🗺️ System Concept & Data Flow
 
-The system splits workloads to minimize server-side computational load and ensure zero text-history exposure on the server:
-1. **Client-Side LLM Execution**: The user's input text is processed locally in their Chrome browser using the experimental `window.ai` Prompt API (Gemini Nano).
-2. **Structured Payload Transfer**: The browser formats the LLM output into structured JSON and dispatches it over WebSockets.
-3. **Server-Side Pillow Composition**: The FastAPI server receives the JSON, resolves the appropriate graphic layers, draws the panel, writes it locally to the static folder, and broadcasts the panel URL to all connected peers in that room.
+The architecture operates as a **Thin Client Pattern**. The client browser handles simple message dispatching and UI rendering, while the server coordinates the multi-model AI pipeline:
+
+1. **User Ingestion**: A user types a conversational chat message. The browser transmits this raw message directly to the server over WebSockets.
+2. **Dialogue & Visual Scripting (Vertex AI: Gemini)**: The server queries a Large Language Model (Gemini Pro) to structure the scene:
+   - Evaluates conversation context.
+   - Formulates the character's verbal dialogue.
+   - Generates a detailed descriptive prompt for image generation (specifying pop-art comic layouts, lighting, and expressions).
+3. **Image Synthesis (Vertex AI: Imagen)**: The server passes the descriptive prompt to an Image Generation model (Imagen) to render the full panel graphics.
+4. **Dialogue Bubble Overlay (Pillow)**: The server overlays the speech bubble and text onto the synthesized graphic canvas.
+5. **Real-time Sync**: The compiled JPEG is saved on the server's static directory and the URL is broadcasted to all connected peers in that room.
 
 ```mermaid
 sequenceDiagram
     autonumber
     actor Client A as User A (Chrome)
     participant Server as FastAPI Server (main.py)
+    participant Gemini as Vertex AI: Gemini
+    participant Imagen as Vertex AI: Imagen
     actor Client B as User B (Chrome)
 
-    Note over Client A, Client B: Connected to WebSocket: /ws/room/comic-room-123
-    Client A->>Client A: Input text: "I'm so excited to build this!"
+    Note over Client A, Client B: Connected to WebSockets Room
+    Client A->>Server: WS Send: type="chat_message" {sender: "Alice", text: "Look out!"}
+    
     rect rgb(30, 41, 59)
-        Note over Client A: local window.ai (Gemini Nano) processes input
-        Note over Client A: Formulates structured JSON:<br/>{character: "hero", emotion: "happy", dialogue: "..."}
+        Note over Server: Server acts as central coordinator
+        Server->>Gemini: Prompt: Write dialogue and compile visual scene details
+        Gemini-->>Server: Returns: {dialogue: "...", visual_prompt: "..."}
+        
+        Server->>Imagen: Generate Image from visual_prompt
+        Imagen-->>Server: Returns: raw synthesized JPEG bytes
+        
+        Note over Server: Overlays speech bubble & text onto JPEG
+        Server->>Server: Saves: /static/generated/gen_panel_xyz.jpg
     end
-    Client A->>Server: WS message: type="chat_message"
-    rect rgb(30, 41, 59)
-        Note over Server: pillow_renderer.py draws comic bubble & character
-        Note over Server: Saves image: app/static/generated/room_xyz.jpg
-    end
-    Server->>Client A: WS broadcast: type="new_panel" (image_url & dialogue)
-    Server->>Client B: WS broadcast: type="new_panel" (image_url & dialogue)
-    Note over Client A, Client B: HTML feed updates and renders the comic panel image
+    
+    Server->>Client A: WS Broadcast: type="new_panel" (image_url & dialogue)
+    Server->>Client B: WS Broadcast: type="new_panel" (image_url & dialogue)
+    Note over Client A, Client B: Both screens synchronize and display the generated panel
 ```
 
 ---
 
 ## 🔌 WebSocket Synchronization Protocol
 
-The real-time synchronization between the room clients and the server uses two message payloads.
+Real-time synchronization between the room clients and the server uses two message payloads.
 
 ### 1. Client-to-Server Event (`chat_message`)
-Dispatched by the sender client after client-side LLM processing has successfully completed.
+Dispatched by the sender browser client. Since the LLM execution is centralized on the server, the client only transmits the raw message text.
 
 ```json
 {
   "type": "chat_message",
   "sender": "Alice",
-  "text": "Wow, this local LLM is incredible!",
-  "character_name": "hero",
-  "detected_emotion": "happy"
+  "text": "Help! The monster is right behind you!"
 }
 ```
 
@@ -60,38 +72,16 @@ Broadcasted by the server to all active WebSockets connected to the room.
 {
   "type": "new_panel",
   "sender": "Alice",
-  "dialogue": "Wow, this local LLM is incredible!",
-  "character": "hero",
-  "emotion": "happy",
-  "image_url": "/static/generated/room_comic-room-123_1721289190.jpg"
+  "dialogue": "Look out!",
+  "image_url": "/static/generated/gen_panel_room-123_1721289190.jpg"
 }
 ```
 
 ---
 
-## 🧠 Client-Side LLM Integration (`window.ai`)
+## 🎨 Server-Side Image Post-Processing
 
-The browser accesses Chrome's Gemini Nano using the Prompt API.
-
-### System Instructions & Prompt Construction
-The prompt is configured to instruct the local assistant to reply strictly in a raw JSON string to facilitate client parsing:
-- **character_name**: speaker character (hero, sidekick, or villain)
-- **detected_emotion**: detected emotion (happy, sad, angry, thinking, surprised, or neutral)
-- **formatted_dialogue**: a punchy, short dialogue text appropriate for a small comic bubble. Keep it under 15 words.
-
----
-
-## 🎨 Server-Side Image Composition
-
-When a `chat_message` JSON payload is received, the server uses Pillow to construct the image:
-
-1. **Background Layer**:
-   - Width: 800px, Height: 800px.
-   - Generates a styled retro gradient (Cyan to Magenta) with halftone-style backing circles.
-2. **Character Layer**:
-   - Resolves directory path matching character_name and checks for emotion-matching files.
-   - Dynamically resizes to fit within a 450px bounding box and composites with alpha transparency onto the bottom-right corner.
-3. **Speech Bubble Layout**:
-   - Calculates bounds for the bubble rectangle.
-   - Fits dialogue text using standard font bounding-box text wrapping.
-   - Draws a rounded rectangle (radius=20) and composites a polygon tail pointing toward the character's coordinate frame.
+Once the server synthesizes the raw image from the Vertex AI Imagen endpoint, the layout engine executes post-processing steps before distribution:
+- **Speech Bubble Compositing**: Analyzes text length to adjust the bubble container width and draws the pointing vector tail towards the speaker's side.
+- **Panel Framing**: Adds the bold comic frame border and overlays a top-left title tag detailing the active character state.
+- **Serving**: Writes the completed layout to local disk storage and serves it statically.
