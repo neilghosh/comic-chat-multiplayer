@@ -1,0 +1,38 @@
+{
+  "hosting": {
+    "site": "comic-chat",
+    "public": "static",
+    "ignore": [
+      "firebase.json",
+      "**/.*",
+      "**/node_modules/**"
+    ],
+    "rewrites": [
+      {
+        "source": "/api/**",
+        "run": {
+          "serviceId": "comic-chat",
+          "region": "us-central1"
+        }
+      },
+      {
+        "source": "/ws",
+        "run": {
+          "serviceId": "comic-chat",
+          "region": "us-central1"
+        }
+      },
+      {
+        "source": "/generated/**",
+        "run": {
+          "serviceId": "comic-chat",
+          "region": "us-central1"
+        }
+      },
+      {
+        "source": "**",
+        "destination": "/index.html"
+      }
+    ]
+  }
+}

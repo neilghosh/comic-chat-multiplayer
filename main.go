@@ -223,30 +223,11 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 			if room.currentPanelID == "" || len(room.currentPanelMessages) == 0 {
 				shouldSplit = true
 			} else {
-				// Rule 1: Split if consecutive message from same sender
-				lastMsg := room.currentPanelMessages[len(room.currentPanelMessages)-1]
-				if lastMsg.Sender == sender {
-					shouldSplit = true
-				}
-				// Rule 2: Split if panel has 2 or more messages (prevents overcrowding)
-				if len(room.currentPanelMessages) >= 2 {
-					shouldSplit = true
-				}
-				// Rule 3: Split if a 3rd unique speaker enters
-				hasSender := false
+				// Create new scene ONLY when the same character talks again in the same scene
 				for _, m := range room.currentPanelMessages {
 					if m.Sender == sender {
-						hasSender = true
-						break
-					}
-				}
-				if !hasSender {
-					speakers := make(map[string]bool)
-					for _, m := range room.currentPanelMessages {
-						speakers[m.Sender] = true
-					}
-					if len(speakers) >= 2 {
 						shouldSplit = true
+						break
 					}
 				}
 			}
@@ -295,10 +276,20 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 				fmt.Printf("Error saving panel image: %v\n", err)
 			}
 
+			uniqueSenders := make(map[string]bool)
+			var sendersList []string
+			for _, m := range messagesCopy {
+				if !uniqueSenders[m.Sender] {
+					uniqueSenders[m.Sender] = true
+					sendersList = append(sendersList, m.Sender)
+				}
+			}
+			participantsStr := strings.Join(sendersList, " & ")
+
 			res, _ := json.Marshal(map[string]interface{}{
 				"type":        "new_panel",
 				"panel_id":    panelID,
-				"sender":      sender,
+				"sender":      participantsStr,
 				"dialogue":    text,
 				"image_url":   imageUrl,
 				"is_fallback": isFallback,
@@ -333,20 +324,36 @@ func runGeminiComicAI(messages []ChatMessage, activeSpeakers []string, seed int)
 	historyStr := historyBuilder.String()
 
 	var speakers []string
-	for _, s := range activeSpeakers {
-		speakers = append(speakers, strings.ToLower(s))
+	var speakerProfiles []string
+	for i, s := range activeSpeakers {
+		lowerName := strings.ToLower(s)
+		speakers = append(speakers, lowerName)
+		
+		// Map index to a specific consistent character design profile
+		switch i {
+		case 0:
+			speakerProfiles = append(speakerProfiles, fmt.Sprintf("- Character '%s': A boy with a round face, dot eyes, cloud-like wavy curly hair on top, wearing a simple long-sleeve crew-neck shirt.", lowerName))
+		case 1:
+			speakerProfiles = append(speakerProfiles, fmt.Sprintf("- Character '%s': A boy wearing a simple baseball cap (with visor pointing to the side/front) and a crew-neck shirt. He has dot eyes and a simple nose.", lowerName))
+		default:
+			speakerProfiles = append(speakerProfiles, fmt.Sprintf("- Character '%s': A person with a round face, spiky hair, and a crew-neck shirt.", lowerName))
+		}
 	}
 	speakersListStr := strings.Join(speakers, ", ")
+	profilesStr := strings.Join(speakerProfiles, "\n")
 
 	instruction := fmt.Sprintf(`Draw a highly detailed classic 1960s black-and-white newspaper comic strip panel (like Mafalda or Peanuts).
 STYLE: Traditional ink on paper, detailed shading, expressive characters, hand-drawn comic style. No colors.
 COMPOSITION: Waist-up medium shot (torso and head only). Characters stand facing each other.
+CRITICAL INSTRUCTION: You MUST maintain exact visual consistency for the characters across different panels. Do NOT change their core design, clothing, or layout.
 CHARACTERS: You must draw exactly these characters: %s.
 Even if a character is silent, they MUST be drawn listening or reacting.
+You MUST draw each character consistently according to their description:
+%s
 BUBBLES: Include hand-drawn speech balloons positioned close above the speaking character's head with a tiny curved pointer tail. 
 The dialogue should be written inside the bubbles clearly.
 DIALOGUE TO INCLUDE:
-%s`, speakersListStr, historyStr)
+%s`, speakersListStr, profilesStr, historyStr)
 
 	// Using the Gemini Image generation endpoint
 	apiURL := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite-image:generateContent?key=%s", apiKey)

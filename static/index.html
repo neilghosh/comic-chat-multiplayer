@@ -483,12 +483,12 @@
 
         <div class="status-bar" id="statusBar">
             <span class="spinner"></span>
-            <span id="statusText">✏️ GEMINI IS GENERATING COMIC PANEL...</span>
+            <span id="statusText">✏️ SENDING COMIC...</span>
         </div>
 
         <div class="stats-bar" id="statsBar">
-            <div>last gemini round trip: <span id="statLatency">-- ms</span></div>
-            <div>panels generated: <span id="statCount">0</span></div>
+            <div>last response took: <span id="statLatency">-- ms</span></div>
+            <div>chat messages: <span id="statCount">0</span></div>
         </div>
 
         <div class="control-bar">
@@ -524,8 +524,11 @@
             }
             document.getElementById('usernameInput').value = userParam;
 
-            const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-            const socket = new WebSocket(`${wsProtocol}//${window.location.host}/ws?room=${currentRoomId}`);
+            const backendOrigin = window.location.hostname === 'localhost'
+                ? `${window.location.protocol}//${window.location.host}`
+                : (window.localStorage.getItem('comicChatBackendOrigin') || 'https://comic-chat-b3zzuedwgq-uc.a.run.app');
+            const wsOrigin = backendOrigin.replace(/^http/, 'ws');
+            const socket = new WebSocket(`${wsOrigin}/ws?room=${encodeURIComponent(currentRoomId)}`);
 
             const comicGrid = document.getElementById('comicGrid');
             const emptyState = document.getElementById('emptyState');
@@ -533,6 +536,7 @@
             const usernameInput = document.getElementById('usernameInput');
 
             let sceneCount = 0;
+            let messageCount = 0;
             const statusBar = document.getElementById('statusBar');
             const statLatency = document.getElementById('statLatency');
             const statCount = document.getElementById('statCount');
@@ -544,9 +548,9 @@
                         const currentUsername = usernameInput.value.trim() || 'Hero1';
                         const statusText = document.getElementById('statusText');
                         if (data.sender === currentUsername) {
-                            statusText.textContent = "✏️ GEMINI IS GENERATING COMIC PANEL...";
+                            statusText.textContent = "✏️ SENDING COMIC...";
                         } else {
-                            statusText.textContent = `✏️ ${escapeHtml(data.sender)} is typing...`;
+                            statusText.textContent = `✏️ ${escapeHtml(data.sender)} is sending a comic...`;
                         }
                         statusBar.style.display = 'flex';
                     }
@@ -558,7 +562,8 @@
                     if (data.duration_ms !== undefined) {
                         statLatency.textContent = `${data.duration_ms} ms`;
                     }
-                    statCount.textContent = sceneCount + 1;
+                    messageCount++;
+                    statCount.textContent = messageCount;
 
                     let panel = document.getElementById(`panel-${data.panel_id}`);
                     
@@ -630,7 +635,7 @@
         };
 
         window.copyInviteLink = function() {
-            const url = window.location.href;
+            const url = `${window.location.origin}${window.location.pathname}`;
             navigator.clipboard.writeText(url).then(() => {
                 const toast = document.createElement('div');
                 toast.className = 'copied-toast';
