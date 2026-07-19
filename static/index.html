@@ -4,6 +4,17 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Comic Chat Multiplayer</title>
+    <!-- Google tag (gtag.js) -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-2VTD8KFQ5W"></script>
+    <script>
+        window.dataLayer = window.dataLayer || [];
+        function gtag(){dataLayer.push(arguments);}
+        gtag('js', new Date());
+        const analyticsPath = window.location.pathname.replace(/^\/room\/[^/]+/, '/room');
+        gtag('config', 'G-2VTD8KFQ5W', {
+            page_location: window.location.origin + analyticsPath
+        });
+    </script>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;800&family=Bangers&display=swap" rel="stylesheet">
     <style>
         :root {
@@ -512,15 +523,21 @@
 
             // Extract username from URL query param
             const urlParams = new URLSearchParams(window.location.search);
-            let userParam = urlParams.get('user');
+            const usernameStorageKey = `comicChatUser:${currentRoomId}`;
+            const queryUser = urlParams.get('user');
+            let userParam = queryUser || window.sessionStorage.getItem(usernameStorageKey);
             if (!userParam || !userParam.trim()) {
                 userParam = prompt("What is your character name?");
                 if (!userParam || !userParam.trim()) {
                     userParam = "hero_" + Math.floor(Math.random() * 1000);
                 }
-                userParam = userParam.trim();
-                const newUrl = window.location.protocol + "//" + window.location.host + window.location.pathname + '?user=' + encodeURIComponent(userParam);
-                window.history.pushState({ path: newUrl }, '', newUrl);
+            }
+            userParam = userParam.trim();
+            window.sessionStorage.setItem(usernameStorageKey, userParam);
+            if (queryUser) {
+                const cleanUrl = new URL(window.location.href);
+                cleanUrl.searchParams.delete('user');
+                window.history.replaceState({}, '', cleanUrl.pathname + cleanUrl.search + cleanUrl.hash);
             }
             document.getElementById('usernameInput').value = userParam;
 
