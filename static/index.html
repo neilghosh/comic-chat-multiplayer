@@ -15,6 +15,7 @@
             page_location: window.location.origin + analyticsPath
         });
     </script>
+    <script src="/runtime-config.js"></script>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;800&family=Bangers&display=swap" rel="stylesheet">
     <style>
         :root {
@@ -475,6 +476,7 @@
                 <div class="room-badge">
                     🏠 Room: <span class="room-id" id="roomIdBadge"></span>
                     <button class="invite-btn" onclick="copyInviteLink()">📋 COPY LINK</button>
+                    <button class="invite-btn" onclick="shareComicStrip()">🖼️ SHARE STRIP</button>
                 </div>
                 <div class="user-setup">
                     <input type="text" id="usernameInput" class="username-input" placeholder="YOUR HERO NAME...">
@@ -541,9 +543,10 @@
             }
             document.getElementById('usernameInput').value = userParam;
 
+            const configuredBackendOrigin = window.COMIC_CHAT_BACKEND_ORIGIN || window.localStorage.getItem('comicChatBackendOrigin');
             const backendOrigin = window.location.hostname === 'localhost'
                 ? `${window.location.protocol}//${window.location.host}`
-                : (window.localStorage.getItem('comicChatBackendOrigin') || 'https://comic-chat-b3zzuedwgq-uc.a.run.app');
+                : (configuredBackendOrigin || window.location.origin);
             const wsOrigin = backendOrigin.replace(/^http/, 'ws');
             const socket = new WebSocket(`${wsOrigin}/ws?room=${encodeURIComponent(currentRoomId)}`);
 
@@ -561,14 +564,34 @@
             socket.onmessage = function(event) {
                 const data = JSON.parse(event.data);
                 if (data.type === 'status') {
+                    const statusText = document.getElementById('statusText');
                     if (data.status === 'generating') {
                         const currentUsername = usernameInput.value.trim() || 'Hero1';
-                        const statusText = document.getElementById('statusText');
                         if (data.sender === currentUsername) {
                             statusText.textContent = "✏️ SENDING COMIC...";
                         } else {
                             statusText.textContent = `✏️ ${escapeHtml(data.sender)} is sending a comic...`;
                         }
+                        statusBar.style.display = 'flex';
+                        messageCount++;
+                        statCount.textContent = messageCount;
+                        if (typeof gtag === 'function' && data.sender === currentUsername) {
+                            gtag('event', 'message_send_allowed', {
+                                limiter_scope: 'per_ip',
+                                room: currentRoomId || 'unknown'
+                            });
+                        }
+                    } else if (data.status === 'rate_limited') {
+                        statusText.textContent = "⏳ Too many messages. Please wait a moment.";
+                        statusBar.style.display = 'flex';
+                        if (typeof gtag === 'function') {
+                            gtag('event', 'rate_limit_hit', {
+                                limiter_scope: 'per_ip',
+                                room: currentRoomId || 'unknown'
+                            });
+                        }
+                    } else if (data.status === 'invalid_message') {
+                        statusText.textContent = "⚠️ Message too long or invalid.";
                         statusBar.style.display = 'flex';
                     }
                 } else if (data.type === 'new_panel') {
@@ -579,9 +602,6 @@
                     if (data.duration_ms !== undefined) {
                         statLatency.textContent = `${data.duration_ms} ms`;
                     }
-                    messageCount++;
-                    statCount.textContent = messageCount;
-
                     let panel = document.getElementById(`panel-${data.panel_id}`);
                     
                     if (panel) {
@@ -654,12 +674,113 @@
         window.copyInviteLink = function() {
             const url = `${window.location.origin}${window.location.pathname}`;
             navigator.clipboard.writeText(url).then(() => {
-                const toast = document.createElement('div');
-                toast.className = 'copied-toast';
-                toast.textContent = '✅ Invite link copied!';
-                document.body.appendChild(toast);
-                setTimeout(() => toast.remove(), 2000);
+                showToast('✅ Invite link copied!');
             });
+        };
+
+        function showToast(text) {
+            const toast = document.createElement('div');
+            toast.className = 'copied-toast';
+            toast.textContent = text;
+            document.body.appendChild(toast);
+            setTimeout(() => toast.remove(), 2000);
+        }
+
+        function waitForImage(imgEl) {
+            if (imgEl.complete && imgEl.naturalWidth > 0) {
+                return Promise.resolve();
+            }
+            return new Promise((resolve, reject) => {
+                imgEl.addEventListener('load', resolve, { once: true });
+                imgEl.addEventListener('error', () => reject(new Error('Image failed to load')), { once: true });
+            });
+        }
+
+        async function buildStripImageBlob() {
+            const imageEls = Array.from(document.querySelectorAll('#comicGrid .comic-panel img'));
+            if (imageEls.length === 0) {
+                throw new Error('No comic panels yet.');
+            }
+
+            await Promise.all(imageEls.map(waitForImage));
+
+            const maxPanelWidth = 900;
+            const margin = 20;
+            const gap = 14;
+            const titleHeight = 44;
+
+            const panelSizes = imageEls.map((imgEl) => {
+                const naturalWidth = imgEl.naturalWidth || 1;
+                const naturalHeight = imgEl.naturalHeight || 1;
+                const drawWidth = Math.min(naturalWidth, maxPanelWidth);
+                const scale = drawWidth / naturalWidth;
+                const drawHeight = Math.max(1, Math.round(naturalHeight * scale));
+                return { drawWidth, drawHeight };
+            });
+
+            const canvasWidth = Math.max(...panelSizes.map((p) => p.drawWidth)) + margin * 2;
+            const panelsHeight = panelSizes.reduce((sum, p) => sum + p.drawHeight, 0) + gap * (panelSizes.length - 1);
+            const canvasHeight = titleHeight + panelsHeight + margin * 2;
+
+            const canvas = document.createElement('canvas');
+            canvas.width = canvasWidth;
+            canvas.height = canvasHeight;
+            const ctx = canvas.getContext('2d');
+
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            ctx.fillStyle = '#111827';
+            ctx.font = '700 20px Outfit, sans-serif';
+            ctx.fillText(`Comic Strip${currentRoomId ? ` - ${currentRoomId}` : ''}`, margin, margin + 24);
+
+            let y = margin + titleHeight;
+            imageEls.forEach((imgEl, index) => {
+                const { drawWidth, drawHeight } = panelSizes[index];
+                const x = Math.round((canvasWidth - drawWidth) / 2);
+                ctx.drawImage(imgEl, x, y, drawWidth, drawHeight);
+                y += drawHeight + gap;
+            });
+
+            return new Promise((resolve, reject) => {
+                canvas.toBlob((blob) => {
+                    if (!blob) {
+                        reject(new Error('Failed to build strip image.'));
+                        return;
+                    }
+                    resolve(blob);
+                }, 'image/png');
+            });
+        }
+
+        window.shareComicStrip = async function() {
+            try {
+                const blob = await buildStripImageBlob();
+                const fileName = `comic-strip-${currentRoomId || 'room'}-${Date.now()}.png`;
+                const file = new File([blob], fileName, { type: 'image/png' });
+
+                if (navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
+                    await navigator.share({
+                        title: 'Comic Strip',
+                        text: `Comic strip from room ${currentRoomId || ''}`.trim(),
+                        files: [file]
+                    });
+                    showToast('✅ Comic strip shared!');
+                    return;
+                }
+
+                const downloadUrl = URL.createObjectURL(blob);
+                const link = document.createElement('a');
+                link.href = downloadUrl;
+                link.download = fileName;
+                document.body.appendChild(link);
+                link.click();
+                link.remove();
+                URL.revokeObjectURL(downloadUrl);
+                showToast('✅ Comic strip downloaded!');
+            } catch (err) {
+                showToast(`⚠️ ${err.message || 'Unable to share strip.'}`);
+            }
         };
 
         function escapeHtml(str) {

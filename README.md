@@ -24,18 +24,40 @@ flowchart LR
 2. Firebase rewrites API and generated-image paths to Cloud Run.
 3. WebSocket connects directly to Cloud Run from the browser.
 
-## Required environment variables
+## Required GitHub variables/secrets
 
-Set these in CI/CD (GitHub Actions variables/secrets), not in source files:
+Set these in CI/CD (GitHub Actions variables/secrets), not in source files.
 
-- `PROJECT_ID`
-- `REGION`
-- `SERVICE`
-- `IMAGE_REPO`
-- `BUCKET_NAME`
-- `DEPLOY_SERVICE_ACCOUNT`
+Repository **variables**:
+
+- `GCP_PROJECT_ID`
+- `GCP_REGION`
+- `CLOUD_RUN_SERVICE`
+- `ARTIFACT_REPO`
+- `GCS_BUCKET_NAME`
+- `GCP_DEPLOY_SERVICE_ACCOUNT`
+- `GCP_RUNTIME_SERVICE_ACCOUNT`
+- `CLOUD_RUN_MIN_INSTANCES`
+- `CLOUD_RUN_PUBLIC_ORIGIN`
+- `FIREBASE_SITE_ID`
+
+Repository **secrets**:
+
 - `GCP_WORKLOAD_IDENTITY_PROVIDER`
 - `GEMINI_API_KEY`
+
+## Infrastructure bootstrap (self-sufficient redeploy)
+
+Use infra artifacts in this repo to recreate required cloud resources:
+
+1. Copy `infra/env.example` to `infra/.env` and fill values.
+2. Run:
+
+```bash
+bash infra/bootstrap.sh
+```
+
+This provisions/verifies required APIs, service accounts, Artifact Registry, GCS bucket, and IAM grants for deploy/runtime identities. It can also create WIF pool/provider when optional WIF values are provided in `infra/.env`.
 
 ## GitHub setup process
 
@@ -44,8 +66,7 @@ Set these in CI/CD (GitHub Actions variables/secrets), not in source files:
    - `GCP_WORKLOAD_IDENTITY_PROVIDER` (full provider resource path)
 3. Add GitHub repository secret:
    - `GEMINI_API_KEY`
-4. Add repository variables or workflow env values for non-secret settings:
-   - project, region, service, repo, bucket, service account.
+4. Add repository variables for non-secret settings (project, region, service, repo, bucket, deploy service account, runtime service account, Cloud Run public origin).
 
 ## IAM setup process
 
@@ -73,7 +94,7 @@ It should:
 4. Deploy Cloud Run with:
    - Gen2 execution environment
    - WebSocket-friendly timeout
-   - Single-instance limit (if keeping in-memory room state)
+   - Single-instance settings (`max-instances=1`, `min-instances` from variable)
    - GCS volume mounted at `/app/static/generated`
 
 ## Frontend deployment process (Firebase Hosting)
@@ -102,6 +123,17 @@ Required local env:
 
 - `GEMINI_API_KEY`
 
+Optional rate-limit env (server-side):
+
+- `PER_IP_BURST_COUNT` (default `5`)
+- `PER_IP_BURST_WINDOW_SECONDS` (default `10`)
+- `PER_IP_SUSTAINED_COUNT` (default `30`)
+- `PER_IP_SUSTAINED_WINDOW_SECONDS` (default `60`)
+- `MAX_MESSAGE_CHARS` (default `500`)
+- `MAX_WS_PAYLOAD_BYTES` (default `4096`)
+- `IP_STATE_TTL_SECONDS` (default `600`)
+- `RATE_METRICS_LOG_INTERVAL_SECONDS` (default `60`)
+
 Optional browser override for backend origin:
 
 ```js
@@ -119,3 +151,8 @@ localStorage.setItem("comicChatBackendOrigin", "https://<your-cloud-run-url>");
 
 You can keep static serving enabled in Cloud Run as a fallback, but primary frontend should be Firebase Hosting.  
 If you want strict separation later, remove static-file serving from Cloud Run and keep only API/WebSocket/generated-assets there.
+
+## Contribution guardrails
+
+- Do not push without explicit user/maintainer consent.
+- Always validate UI/interaction changes in a local browser before requesting push.

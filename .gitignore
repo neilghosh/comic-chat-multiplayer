@@ -1,4 +1,7 @@
 .env
+infra/.env
+.firebase/
+firebase-debug.log
 comic-chat-multiplayer
 scratch/
 static/generated/

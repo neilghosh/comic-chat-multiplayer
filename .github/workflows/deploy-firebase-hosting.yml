@@ -11,8 +11,12 @@ permissions:
   id-token: write
 
 env:
-  PROJECT_ID: demoneil
-  DEPLOY_SERVICE_ACCOUNT: cloudrun-deploy@demoneil.iam.gserviceaccount.com
+  PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+  DEPLOY_SERVICE_ACCOUNT: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+  CLOUD_RUN_PUBLIC_ORIGIN: ${{ vars.CLOUD_RUN_PUBLIC_ORIGIN }}
+  CLOUD_RUN_SERVICE: ${{ vars.CLOUD_RUN_SERVICE }}
+  GCP_REGION: ${{ vars.GCP_REGION }}
+  FIREBASE_SITE_ID: ${{ vars.FIREBASE_SITE_ID }}
 
 jobs:
   deploy:
@@ -31,6 +35,36 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "24"
+
+      - name: Validate required configuration
+        run: |
+          for key in PROJECT_ID DEPLOY_SERVICE_ACCOUNT CLOUD_RUN_PUBLIC_ORIGIN CLOUD_RUN_SERVICE GCP_REGION FIREBASE_SITE_ID; do
+            if [ -z "${!key}" ]; then
+              echo "Missing required config: $key"
+              exit 1
+            fi
+          done
+
+      - name: Render Firebase Hosting config
+        run: |
+          tmp_file="$(mktemp)"
+          jq \
+            --arg svc "${CLOUD_RUN_SERVICE}" \
+            --arg reg "${GCP_REGION}" \
+            --arg site "${FIREBASE_SITE_ID}" \
+            '.hosting.site = $site
+            | .hosting.rewrites = (.hosting.rewrites | map(
+                if has("run") then
+                  .run.serviceId = $svc | .run.region = $reg
+                else
+                  .
+                end
+              ))' firebase.json > "${tmp_file}"
+          mv "${tmp_file}" firebase.json
+
+      - name: Write runtime config
+        run: |
+          printf 'window.COMIC_CHAT_BACKEND_ORIGIN = "%s";\n' "${CLOUD_RUN_PUBLIC_ORIGIN}" > static/runtime-config.js
 
       - name: Deploy Hosting
         run: npx -y firebase-tools deploy --only hosting --project "${PROJECT_ID}"

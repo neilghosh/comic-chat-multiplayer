@@ -1,0 +1,1 @@
+window.COMIC_CHAT_BACKEND_ORIGIN = "";
