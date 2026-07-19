@@ -21,8 +21,10 @@ import (
 )
 
 type Client struct {
-	conn io.ReadWriteCloser
-	send chan []byte
+	mu     sync.Mutex
+	conn   io.ReadWriteCloser
+	send   chan []byte
+	closed bool
 }
 
 type ChatMessage struct {
@@ -221,8 +223,8 @@ func extractClientIP(r *http.Request) string {
 	xff := strings.TrimSpace(r.Header.Get("X-Forwarded-For"))
 	if xff != "" {
 		parts := strings.Split(xff, ",")
-		for _, part := range parts {
-			ip := strings.TrimSpace(part)
+		if len(parts) >= 2 {
+			ip := strings.TrimSpace(parts[len(parts)-2])
 			if net.ParseIP(ip) != nil {
 				return ip
 			}
@@ -239,14 +241,29 @@ func extractClientIP(r *http.Request) string {
 	return remoteAddr
 }
 
-func enqueueClientMessage(client *Client, payload []byte) {
-	defer func() {
-		_ = recover()
-	}()
-	select {
-	case client.send <- payload:
-	default:
+func (c *Client) enqueue(payload []byte) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.closed {
+		return false
 	}
+	select {
+	case c.send <- payload:
+		return true
+	default:
+		return false
+	}
+}
+
+func (c *Client) close() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.closed {
+		return
+	}
+	c.closed = true
+	close(c.send)
+	c.conn.Close()
 }
 
 func startRateMetricsLogger(interval time.Duration) {
@@ -335,7 +352,7 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		room.mu.Lock()
 		delete(room.clients, client)
 		room.mu.Unlock()
-		conn.Close()
+		client.close()
 	}()
 
 	go func() {
@@ -366,7 +383,7 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 				"status": "invalid_message",
 				"sender": req.Sender,
 			})
-			enqueueClientMessage(client, statusMsg)
+			client.enqueue(statusMsg)
 			continue
 		}
 		if !limiter.allow(clientIP, time.Now()) {
@@ -376,7 +393,7 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 				"status": "rate_limited",
 				"sender": req.Sender,
 			})
-			enqueueClientMessage(client, statusMsg)
+			client.enqueue(statusMsg)
 			continue
 		}
 		atomic.AddUint64(&rateAllowedTotal, 1)
@@ -432,10 +449,8 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 			})
 			room.mu.Lock()
 			for c := range room.clients {
-				select {
-				case c.send <- statusMsg:
-				default:
-					close(c.send)
+				if !c.enqueue(statusMsg) {
+					c.close()
 					delete(room.clients, c)
 				}
 			}
@@ -475,10 +490,8 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 
 			room.mu.Lock()
 			for c := range room.clients {
-				select {
-				case c.send <- res:
-				default:
-					close(c.send)
+				if !c.enqueue(res) {
+					c.close()
 					delete(room.clients, c)
 				}
 			}

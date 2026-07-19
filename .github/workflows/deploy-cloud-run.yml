@@ -46,6 +46,10 @@ jobs:
               exit 1
             fi
           done
+          if [[ -n "${MIN_INSTANCES}" && "${MIN_INSTANCES}" != "0" && "${MIN_INSTANCES}" != "1" ]]; then
+            echo "CLOUD_RUN_MIN_INSTANCES must be 0 or 1"
+            exit 1
+          fi
 
       - name: Ensure Artifact Registry repository exists
         run: |

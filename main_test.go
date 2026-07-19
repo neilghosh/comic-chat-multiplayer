@@ -223,8 +223,8 @@ func TestWebSocketRateLimitIsSharedByIP(t *testing.T) {
 	resetWebSocketTestState(t, 1, 4096)
 	server := newWebSocketTestServer(t)
 
-	first := newTestWebSocket(t, server.URL, "rate-limit", "203.0.113.12, 10.0.0.1")
-	second := newTestWebSocket(t, server.URL, "rate-limit", "203.0.113.12, 10.0.0.2")
+	first := newTestWebSocket(t, server.URL, "rate-limit", "198.51.100.1, 203.0.113.12, 10.0.0.1")
+	second := newTestWebSocket(t, server.URL, "rate-limit", "198.51.100.2, 203.0.113.12, 10.0.0.2")
 
 	first.sendJSON(t, map[string]string{"type": "chat_message", "sender": "Alex", "text": "First"})
 	first.awaitMessage(t, func(message map[string]any) bool {
@@ -253,6 +253,8 @@ func TestWebSocketClosesOnOversizedFrame(t *testing.T) {
 	socket.conn.SetReadDeadline(time.Now().Add(2 * time.Second))
 	if _, err := socket.reader.ReadByte(); err == nil {
 		t.Fatal("expected oversized frame to close the connection")
+	} else if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+		t.Fatal("server left the oversized WebSocket connection open")
 	}
 }
 

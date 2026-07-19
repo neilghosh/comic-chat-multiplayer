@@ -83,7 +83,7 @@ gcloud storage buckets add-iam-policy-binding "gs://${GCS_BUCKET_NAME}" \
   --role "roles/storage.objectUser" \
   --project "${GCP_PROJECT_ID}" >/dev/null
 
-if [[ -n "${GCP_PROJECT_NUMBER:-}" && -n "${GCP_WORKLOAD_IDENTITY_POOL:-}" && -n "${GCP_WORKLOAD_IDENTITY_PROVIDER:-}" && -n "${GITHUB_REPOSITORY:-}" ]]; then
+if [[ -n "${GCP_PROJECT_NUMBER:-}" && -n "${GCP_WORKLOAD_IDENTITY_POOL:-}" && -n "${GCP_WORKLOAD_IDENTITY_PROVIDER_ID:-}" && -n "${GITHUB_REPOSITORY:-}" ]]; then
   echo "Ensuring Workload Identity pool/provider exist..."
   gcloud iam workload-identity-pools describe "${GCP_WORKLOAD_IDENTITY_POOL}" \
     --location=global \
@@ -93,11 +93,11 @@ if [[ -n "${GCP_PROJECT_NUMBER:-}" && -n "${GCP_WORKLOAD_IDENTITY_POOL:-}" && -n
     --project="${GCP_PROJECT_ID}" \
     --display-name="GitHub OIDC pool"
 
-  gcloud iam workload-identity-pools providers describe "${GCP_WORKLOAD_IDENTITY_PROVIDER}" \
+  gcloud iam workload-identity-pools providers describe "${GCP_WORKLOAD_IDENTITY_PROVIDER_ID}" \
     --workload-identity-pool="${GCP_WORKLOAD_IDENTITY_POOL}" \
     --location=global \
     --project="${GCP_PROJECT_ID}" >/dev/null 2>&1 || \
-  gcloud iam workload-identity-pools providers create-oidc "${GCP_WORKLOAD_IDENTITY_PROVIDER}" \
+  gcloud iam workload-identity-pools providers create-oidc "${GCP_WORKLOAD_IDENTITY_PROVIDER_ID}" \
     --workload-identity-pool="${GCP_WORKLOAD_IDENTITY_POOL}" \
     --location=global \
     --project="${GCP_PROJECT_ID}" \
@@ -134,5 +134,5 @@ echo "  FIREBASE_SITE_ID=${FIREBASE_SITE_ID:-<your-firebase-site-id>}"
 echo "  CLOUD_RUN_MIN_INSTANCES=1"
 echo
 echo "Configure GitHub repository secrets:"
-echo "  GCP_WORKLOAD_IDENTITY_PROVIDER=projects/.../locations/global/workloadIdentityPools/.../providers/..."
+echo "  GCP_WORKLOAD_IDENTITY_PROVIDER=projects/${GCP_PROJECT_NUMBER:-<project-number>}/locations/global/workloadIdentityPools/${GCP_WORKLOAD_IDENTITY_POOL:-<pool-id>}/providers/${GCP_WORKLOAD_IDENTITY_PROVIDER_ID:-<provider-id>}"
 echo "  GEMINI_API_KEY=<value>"
